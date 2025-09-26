@@ -8,29 +8,6 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 from modules.ui_modules import id_card_columns
 
 
-def list_input_files(input_dir: str) -> list:
-    """
-    List all files in a given input directory.
-
-    Args:
-        input_dir (str): Path to the directory.
-
-    Returns:
-        list: List of file paths.
-    """
-    try:
-        files = [
-            os.path.join(input_dir, f)
-            for f in os.listdir(input_dir)
-            if os.path.isfile(os.path.join(input_dir, f))
-        ]
-        log(f"Found {len(files)} files in {input_dir}", level="INFO")
-        return files
-    except Exception as e:
-        log(f"Error listing files in {input_dir}: {e}", level="ERROR")
-        return []
-
-
 def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right="2D"):
     """
     Merge two DataFrames on a key, handling shared columns with custom logic.
@@ -39,16 +16,6 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
       - If values are identical, keep the value
       - If values differ, concatenate:
         '{val_right} (As-Designed)\n{val_left} (As-Procured)'
-
-    Args:
-        df_left (pd.DataFrame): First dataframe
-        df_right (pd.DataFrame): Second dataframe
-        on (str): Key column name
-        label_left (str): Label for left dataframe values
-        label_right (str): Label for right dataframe values
-
-    Returns:
-        pd.DataFrame: Merged dataframe with smart conflict resolution
     """
     merged = pd.merge(
         df_left, df_right, on=on, how="outer",
@@ -56,33 +23,44 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
     )
 
     # Nouvelle définition de ECS_Mtr :
-    # si RepeFonct finit par 'RA-' et que le candidat existe bien dans merged
     existing_repefonct = set(merged["RepeFonct"].astype(str))
-    
 
     def compute_ecs_mtr(x):
-        if str(x).endswith("RA-"):
-            candidate = str(x)[:10] + "M"
+        s = str(x)
+        if s.endswith("RA-"):
+            candidate = s[:-1] + "M"  # transforme RA- → RAM
             if candidate in existing_repefonct:
                 return candidate
-            
         return None
 
     merged["ECS_Mtr"] = merged["RepeFonct"].apply(compute_ecs_mtr)
-    
-    # Appliquer la règle d’héritage électrique
-    merged = apply_electrical_inheritance(merged, st.session_state["mda_df"])
 
-    # Résolution des colonnes communes
+    # Résolution des colonnes communes (fusion 1D/2D)
     shared_columns = set(df_left.columns).intersection(df_right.columns) - {on}
-
     for col in shared_columns:
         col_left = f"{col}_{label_left}"
         col_right = f"{col}_{label_right}"
 
         def resolve(row):
-            val_left = str(row[col_left]) if pd.notna(row[col_left]) and row[col_left] != "null" else ""
-            val_right = str(row[col_right]) if pd.notna(row[col_right]) and row[col_right] != "null" else ""
+            """
+            Resolve a shared column between two DataFrames by applying a custom logic.
+
+            The logic is as follows:
+
+            - If the values are identical, keep the value
+            - If the values differ, concatenate the values with a newline separator,
+            and add a label indicating the origin of the value (As-Designed or As-Procured)
+
+            Args:
+                row (pandas.Series): The row of the DataFrame to resolve
+
+            Returns:
+                str: The resolved value
+            """
+            val_left = str(row[col_left]) if pd.notna(
+                row[col_left]) and row[col_left] != "null" else ""
+            val_right = str(row[col_right]) if pd.notna(
+                row[col_right]) and row[col_right] != "null" else ""
             if val_left == val_right:
                 return val_left
             val_right = f"{val_right} (As-Designed)" if val_right != "" else ""
@@ -92,6 +70,10 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
         merged[col] = merged.apply(resolve, axis=1)
         merged.drop(columns=[col_left, col_right], inplace=True)
 
+    # Appliquer la règle d’héritage électrique après la résolution
+    merged = apply_electrical_inheritance(merged, st.session_state["mda_df"])
+    # Apply filter to keep only damper ECS (RA-)
+    merged = merged[merged["RepeFonct"].str.endswith("RA-")]
     log(
         f"Smart merge completed | rows={len(merged)} | unique {on}={merged[on].nunique()}",
         level="INFO",
@@ -99,7 +81,7 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
     return merged
 
 
-# Load all files into dfs dict
+@st.cache_data
 def read_inputs(uploaded_files):
     dfs = {}
     for file in uploaded_files:
@@ -107,7 +89,8 @@ def read_inputs(uploaded_files):
             df = pd.read_csv(file)
 
             if "RepeFonct" not in df.columns:
-                st.error(f"File `{file.name}` does not contain 'RepeFonct' column.")
+                st.error(
+                    f"File `{file.name}` does not contain 'RepeFonct' column.")
                 log(
                     f"'RepeFonct' column missing in file: {file.name}. Columns={list(df.columns)}",
                     level="WARNING",
@@ -122,22 +105,24 @@ def read_inputs(uploaded_files):
     return dfs
 
 
-def merge_df(uploaded_files):
+def merge_df(dfs):
     # --- Merge step ---
     merged_df = None
-    for name, df in read_inputs(uploaded_files).items():
+    for _, df in dfs.items():
+
         if merged_df is None:
             merged_df = df
         else:
             merged_df = smart_merge(
                 merged_df, df, on="RepeFonct"
             )
-    
+
     # ✅ Vérifier que la DF existe et n'est pas vide
     if merged_df is not None and not merged_df.empty:
         # Search bar
-        search = st.text_input("🔎 Search", placeholder="🔎 Search", label_visibility="hidden")
-        
+        search = st.text_input(
+            "🔎 Search", placeholder="🔎 Search", label_visibility="hidden")
+
         if search is not None:
             mask = merged_df.apply(
                 lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1
@@ -148,15 +133,18 @@ def merge_df(uploaded_files):
             filtered_df = merged_df
     else:
         filtered_df = pd.DataFrame()
-    
+
     return filtered_df
 
 
-def show_n_select_ecs(uploaded_files):
+def show_n_select_ecs(dfs):
     with st.expander("🔎 Search", expanded=True):
-        filtered_df = merge_df(uploaded_files)
+
+        filtered_df = merge_df(dfs)
+
         gb = GridOptionsBuilder.from_dataframe(filtered_df)
-        gb.configure_selection("single", use_checkbox=False)  # 'multiple' possible
+        # 'multiple' possible
+        gb.configure_selection("single", use_checkbox=False)
         gb.configure_pagination(paginationAutoPageSize=False)
         gb.configure_default_column(editable=False, groupable=True)
         grid_options = gb.build()
@@ -188,15 +176,18 @@ def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> 
         return merged
 
     # 1. Liste des attributs électriques
-    electrical_attrs = mda_df.loc[mda_df["Facet"] == "2_Electrical", "MUDU"].tolist()
-    electrical_attrs = [col for col in electrical_attrs if col in merged.columns]
+    electrical_attrs = mda_df.loc[mda_df["Facet"]
+                                  == "2_Electrical", "MUDU"].tolist()
+    electrical_attrs = [
+        col for col in electrical_attrs if col in merged.columns]
 
     if not electrical_attrs:
         return merged
 
     # 2. Préparer la table source des valeurs à hériter
     source = merged[["RepeFonct"] + electrical_attrs].copy()
-    source.rename(columns={attr: attr + "_Msrc" for attr in electrical_attrs}, inplace=True)
+    source.rename(
+        columns={attr: attr + "_Msrc" for attr in electrical_attrs}, inplace=True)
     source.rename(columns={"RepeFonct": "RepeFonct_Msrc"}, inplace=True)
 
     # 3. Merge pour récupérer les valeurs depuis ECS_Mtr
@@ -211,14 +202,20 @@ def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> 
     ra_mask = merged["RepeFonct"].astype(str).str.endswith("RA-")
 
     for attr in electrical_attrs:
-        current_val = merged.loc[ra_mask, attr].astype(str).str.strip()
-        inherited_val = merged.loc[ra_mask, attr + "_Msrc"]
+        current_val = merged.loc[ra_mask, attr].astype(str)
 
-        # Remplacer si la valeur est vide, [NE], "-" ou null-like
-        #to_replace = current_val.isin(["", "[NE]", "-", "nan", "None"])
-        merged.loc[ra_mask, attr] = inherited_val
+        # valeurs vides / nullish / contient [NE] (même avec suffixes)
+        to_replace = (
+            current_val.str.contains(r"\[ne\]", case=False, na=True) |
+            current_val.str.strip().str.lower().isin(
+                {"", "-", "nan", "none", "null"})
+        )
+
+        inherited_val = merged.loc[ra_mask, attr + "_Msrc"]
+        merged.loc[ra_mask & to_replace, attr] = inherited_val
 
     # 5. Nettoyage
-    merged.drop(columns=["RepeFonct_Msrc"] + [a + "_Msrc" for a in electrical_attrs], inplace=True)
+    merged.drop(columns=["RepeFonct_Msrc"] +
+                [a + "_Msrc" for a in electrical_attrs], inplace=True)
 
     return merged

@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 
+
 def id_card_columns(selected):
     ecs = selected.loc[0, "RepeFonct"]
     st.subheader(f"🆔{ecs}")
@@ -25,6 +26,7 @@ def id_card_columns(selected):
                     except KeyError:
                         pass
 
+
 def upload_sidebar():
     # --- Sidebar section ---
     input_uploader_expanded = True if 'inputs_uploaded' in st.session_state is None else False
@@ -36,3 +38,47 @@ def upload_sidebar():
             label_visibility="hidden",
         )
         return st.session_state["inputs_uploaded"]
+
+# Cache la lecture CSV
+
+
+@st.cache_data
+def load_csv(file):
+    return pd.read_csv(file)
+
+
+def sidebar_inputs():
+    from modules.utils import read_inputs
+
+    """Gestion de l’upload et intégration des inputs dans la sidebar."""
+
+    if "inputs_integrated" not in st.session_state:
+        st.session_state.inputs_integrated = False
+        st.session_state.uploaded_files = None
+        st.session_state.dataframes = None
+
+    if not st.session_state.inputs_integrated:
+        st.sidebar.subheader("⬇️ Upload Inputs")
+        uploaded_files = st.sidebar.file_uploader(
+            "Sélectionne tes inputs",
+            type=["csv"],
+            accept_multiple_files=True
+        )
+        if uploaded_files:
+            st.session_state.uploaded_files = uploaded_files
+
+        if st.sidebar.button("Integrate"):
+            if st.session_state.uploaded_files:
+                dfs = read_inputs(uploaded_files)
+                st.session_state.dataframes = dfs
+                st.session_state.inputs_integrated = True
+                st.success("Inputs intégrés avec succès ✅")
+                st.rerun()
+    else:
+        st.sidebar.subheader("⬇️ Upload Inputs")
+        st.sidebar.write("Inputs intégrés en cache.")
+        if st.sidebar.button("Reset"):
+            st.session_state.inputs_integrated = False
+            st.session_state.uploaded_files = None
+            st.session_state.dataframes = None
+            st.rerun()

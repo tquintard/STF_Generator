@@ -1,6 +1,7 @@
 
 # Core app framework
 streamlit>=1.32.0
+streamlit-aggrid
 
 # Data handling
 pandas>=2.0.0
