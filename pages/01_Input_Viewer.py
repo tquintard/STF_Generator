@@ -4,8 +4,8 @@ import streamlit as st
 
 
 from config.settings import log, MDM_FILE
-from modules.utils import merge_df, show_n_select_ecs
-from modules.ui_modules import sidebar_inputs
+from modules.utils import show_n_select_ecs
+
 
 # from modules.loader import load_excel
 
@@ -17,8 +17,8 @@ st.set_page_config(page_title="Input Viewer", page_icon="👀", layout="wide")
 
 st.title("👀 Input Viewer")
 
-sidebar_inputs()
-
+if "inputs_integrated" not in st.session_state:
+    st.session_state.inputs_integrated = False
 if st.session_state.inputs_integrated:
     try:
         show_n_select_ecs(st.session_state.dataframes)

@@ -4,7 +4,7 @@ import pandas as pd
 
 def id_card_columns(selected):
     ecs = selected.loc[0, "RepeFonct"]
-    st.subheader(f"🆔{ecs}")
+    st.subheader(f"🔩{ecs}")
     mda_df, facet_labels = st.session_state['mda_df'], st.session_state['facet_labels']
     # Création d'autant de colonnes que de facettes
     cols = st.columns(len(facet_labels))
@@ -57,28 +57,27 @@ def sidebar_inputs():
         st.session_state.uploaded_files = None
         st.session_state.dataframes = None
 
-    if not st.session_state.inputs_integrated:
-        st.sidebar.subheader("⬇️ Upload Inputs")
-        uploaded_files = st.sidebar.file_uploader(
-            "Sélectionne tes inputs",
-            type=["csv"],
-            accept_multiple_files=True
-        )
-        if uploaded_files:
-            st.session_state.uploaded_files = uploaded_files
+    with st.sidebar.expander("Upload Inputs", icon="⬇️", expanded=True):
+        if not st.session_state.inputs_integrated:
+            uploaded_files = st.file_uploader(
+                "Sélectionne tes inputs",
+                type=["csv"],
+                accept_multiple_files=True
+            )
+            if uploaded_files:
+                st.session_state.uploaded_files = uploaded_files
 
-        if st.sidebar.button("Integrate"):
-            if st.session_state.uploaded_files:
-                dfs = read_inputs(uploaded_files)
-                st.session_state.dataframes = dfs
-                st.session_state.inputs_integrated = True
-                st.success("Inputs intégrés avec succès ✅")
+            if st.button("Integrate"):
+                if st.session_state.uploaded_files:
+                    dfs = read_inputs(uploaded_files)
+                    st.session_state.dataframes = dfs
+                    st.session_state.inputs_integrated = True
+                    st.success("Inputs intégrés avec succès")
+                    st.rerun()
+        else:
+            st.success("Inputs intégrés avec succès")
+            if st.button("Reset"):
+                st.session_state.inputs_integrated = False
+                st.session_state.uploaded_files = None
+                st.session_state.dataframes = None
                 st.rerun()
-    else:
-        st.sidebar.subheader("⬇️ Upload Inputs")
-        st.sidebar.write("Inputs intégrés en cache.")
-        if st.sidebar.button("Reset"):
-            st.session_state.inputs_integrated = False
-            st.session_state.uploaded_files = None
-            st.session_state.dataframes = None
-            st.rerun()

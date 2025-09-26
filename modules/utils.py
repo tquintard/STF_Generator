@@ -114,9 +114,9 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
                 row[col_right]) and row[col_right] != "null" else ""
             if val_left == val_right:
                 return val_left
-            val_right = f"{val_right} (As-Designed)" if val_right != "" else ""
+            val_right = f"{val_right} (As-Designed)\n" if val_right != "" else ""
             val_left = f"{val_left} (As-Procured)" if val_left != "" else ""
-            return f"{val_right}\n{val_left}"
+            return val_right + val_left
 
         merged[col] = merged.apply(resolve, axis=1)
         merged.drop(columns=[col_left, col_right], inplace=True)
@@ -171,7 +171,7 @@ def merge_df(dfs):
     # ✅ Vérifier que la DF existe et n'est pas vide
     if merged_df is not None and not merged_df.empty:
         # Search bar
-        search = st.text_input(
+        search = st.sidebar.text_input(
             "🔎 Search", placeholder="🔎 Search", label_visibility="hidden")
 
         if search is not None:
@@ -198,7 +198,19 @@ def merge_df(dfs):
 
 
 def show_n_select_ecs(dfs):
-    with st.expander("🔎 Search", expanded=True):
+    if "selected_ecs" not in st.session_state:
+        st.session_state["selected_ecs"] = False
+        tabs = st.tabs(["🔎"])
+    else:
+        if st.session_state["selected_ecs"]:
+            tabs = st.tabs(
+                ["🔎",
+                 "🆔"])
+        else:
+            tabs = st.tabs(["🔎"])
+    selected = None
+
+    with tabs[0]:
 
         filtered_df = merge_df(dfs)
 
@@ -220,7 +232,12 @@ def show_n_select_ecs(dfs):
 
     # === Identity Card ===
     if selected is not None:
-        id_card_columns(selected.reset_index(drop=True))
+        st.session_state["selected_ecs"] = True
+        st.session_state["selected_ecs_df"] = selected.reset_index(drop=True)
+        with tabs[1]:
+            id_card_columns(st.session_state["selected_ecs_df"])
+    else:
+        st.session_state["selected_ecs"] = False
 
 
 def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> pd.DataFrame:
