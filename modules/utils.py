@@ -8,6 +8,57 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 from modules.ui_modules import id_card_columns
 
 
+def apply_attribute_order(df: pd.DataFrame, mda_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Reorder DataFrame columns to respect the attribute order defined in the
+    MDM (sheet "Attribute"), using column "Order" and attribute id column "MUDU".
+
+    Rules:
+    - Keep `RepeFonct` first when present.
+    - Keep `ECS_Mtr` second when present.
+    - Then, order attributes by ascending `Order` from the MDM.
+    - Any remaining columns (not in MDM) are appended preserving current order.
+    - If MDM or required columns are missing, returns df unchanged.
+    """
+    if df is None or df.empty:
+        return df
+
+    if mda_df is None or mda_df.empty:
+        return df
+
+    if not {"MUDU", "Order"}.issubset(mda_df.columns):
+        return df
+
+    all_cols = list(df.columns)
+
+    # Filter MDM attributes that exist in the DataFrame
+    mda_sub = mda_df[mda_df["MUDU"].isin(all_cols)].copy()
+    if mda_sub.empty:
+        return df
+
+    # Ensure numeric ordering for robust sorting
+    mda_sub["__OrderNum__"] = pd.to_numeric(mda_sub["Order"], errors="coerce")
+    mda_sub.sort_values(["__OrderNum__", "MUDU"],
+                        inplace=True, kind="mergesort")
+
+    ordered_attrs = mda_sub["MUDU"].tolist()
+
+    new_cols = []
+    if "RepeFonct" in all_cols:
+        new_cols.append("RepeFonct")
+
+    # Add attributes in requested order, skipping ones already placed
+    for attr in ordered_attrs:
+        if attr in df.columns and attr not in new_cols:
+            new_cols.append(attr)
+
+    # Append remaining columns preserving their current relative order
+    remaining = [c for c in all_cols if c not in new_cols]
+    new_cols.extend(remaining)
+
+    return df[new_cols]
+
+
 def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right="2D"):
     """
     Merge two DataFrames on a key, handling shared columns with custom logic.
@@ -133,6 +184,15 @@ def merge_df(dfs):
             filtered_df = merged_df
     else:
         filtered_df = pd.DataFrame()
+
+    # Apply attribute-based column ordering if MDM is available
+    try:
+        mda_df = st.session_state.get("mda_df")
+        if mda_df is not None:
+            filtered_df = apply_attribute_order(filtered_df, mda_df)
+    except Exception as _:
+        # In case of any issue with ordering, keep the original df
+        pass
 
     return filtered_df
 
