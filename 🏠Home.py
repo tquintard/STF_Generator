@@ -1,4 +1,4 @@
-# Home.py
+# Home1.py
 
 import streamlit as st
 from config.settings import APP_NAME, APP_VERSION, MDM_FILE, log
@@ -7,15 +7,15 @@ from modules.ui_modules import sidebar_inputs
 
 # === Streamlit page configuration ===
 st.set_page_config(
-    page_title=f"{APP_NAME}",
-    page_icon="🧪",
+    page_title="Home",
+    page_icon="🏠",
     layout="wide"
 )
 
 
 # === Header ===
-st.title(f"🧪 {APP_NAME}")
-st.caption(f"Version {APP_VERSION}")
+st.title("🏠 Home")
+st.caption(f"{APP_NAME} - v{APP_VERSION}")
 
 log("Application started")
 
