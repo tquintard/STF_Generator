@@ -1,6 +1,7 @@
-# modules/utils.py
+﻿# modules/utils.py
 
 import os
+import io
 import pandas as pd
 import streamlit as st
 from config.settings import log
@@ -167,7 +168,7 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
     def compute_ecs_mtr(x):
         s = str(x)
         if s.endswith("RA-"):
-            candidate = s[:-1] + "M"  # transforme RA- → RAM
+            candidate = s[:-1] + "M"  # transforme RA- â†’ RAM
             if candidate in existing_repefonct:
                 return candidate
         return None
@@ -237,7 +238,7 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
         merged[col] = merged.apply(resolve, axis=1)
         merged.drop(columns=[col_left, col_right], inplace=True)
 
-    # Appliquer la règle d’héritage électrique après la résolution
+    # Appliquer la rÃ¨gle dâ€™héritage électrique aprÃ¨s la résolution
     merged = apply_electrical_inheritance(merged, st.session_state["mda_df"])
     # Apply filter to keep only damper ECS (RA-)
     merged = merged[merged["RepeFonct"].str.endswith("RA-")]
@@ -290,23 +291,27 @@ def show_n_select_ecs(dfs):
     cols = st.columns([0.75, 0.25], gap="small")
     with cols[0]:
         st.subheader("🔎 Search Results")
+        progress = st.progress(0, text="Preparing dataâ€¦")
         selected = None
         if "merged_df" not in st.session_state:
             st.session_state["merged_df"] = None
         if st.session_state["merged_df"] is None:
             merged_df = merge_df(dfs)
+            progress.progress(20, text="Merging inputsâ€¦")
         else:
             merged_df = st.session_state["merged_df"]
+            progress.progress(20, text="Using cached merged dataâ€¦")
 
         # Search bar
         search = st.sidebar.text_input(
             "🔎 Search", label_visibility="visible")
 
-        if search is not None:
+        if False:
             mask = merged_df.apply(
                 lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1
             )
             merged_df = merged_df[mask]
+        # Progress will be updated after filters are applied (only when needed)
 
         # Default sidebar filters on key MUDUs
         # Build a working copy and apply filters before free-text search
@@ -314,11 +319,23 @@ def show_n_select_ecs(dfs):
         try:
             if "RepeFonct" in _pre.columns:
                 _pre["CodMatExt"] = _pre["RepeFonct"].astype(
-                    str).str.slice(8, 11)
+                    str).str.slice(0, 3)
         except Exception:
             pass
 
         with st.sidebar.expander("Filters", expanded=True):
+            curr_filters = {}
+            try:
+                _label_map = _attribute_label_map(
+                    st.session_state.get("mda_df")) or {}
+            except Exception:
+                _label_map = {}
+            try:
+                import re as _re
+                _norm_map = {(_re.sub(r"\W+", "", str(k)).lower())                             : v for k, v in _label_map.items()}
+            except Exception:
+                _norm_map = {}
+
             def _apply_multiselect(df, col):
                 if col in df.columns:
                     opts = (
@@ -327,27 +344,104 @@ def show_n_select_ecs(dfs):
                     )
                     # clean empties
                     opts = sorted([o for o in opts if o != ""])
-                    sel = st.multiselect(col, opts)
-                    if sel:
-                        return df[df[col].astype(str).isin(sel)]
+                    _label = _label_map.get(col)
+                    if not _label:
+                        try:
+                            _norm = _re.sub(r"\W+", "", str(col)).lower()
+                            _label = _norm_map.get(_norm, col)
+                        except Exception:
+                            _label = col
+                    sel = st.multiselect(_label, opts, key=f"flt_{col}")
+                    curr_filters[col] = tuple(sel)
                 return df
 
-            for _col in ("ElemSys", "ComponentKind", "Contrat", "CodMatExt"):
+            for _col in ("ElemSys", "Component Kind", "ComponentKind", "Contrat", "CodMatExt"):
                 _pre = _apply_multiselect(_pre, _col)
 
         # Apply the pre-filters to the dataset used by the search/grid
         merged_df = _pre
+        progress.progress(45, text="Applying filtersâ€¦")
 
-        st.sidebar.caption(f"{len(merged_df)} résultats trouvés")
+# replaced by cached caption below
 
-        gb = GridOptionsBuilder.from_dataframe(merged_df)
+        # Compute or reuse filtered data for grid (avoid recomputation on selection changes)
+        prev_filters = st.session_state.get("grid_filters", {})
+        prev_search = st.session_state.get("grid_search", "")
+        need_compute = (
+            st.session_state.get("grid_data_df") is None
+            or prev_filters != curr_filters
+            or prev_search != (search or "")
+        )
+
+        if not need_compute:
+            try:
+                progress.empty()
+            except Exception:
+                pass
+
+        if need_compute:
+            base_df = st.session_state.get("merged_df")
+            data_df = base_df.copy()
+            try:
+                if "RepeFonct" in data_df.columns and "CodMatExt" not in data_df.columns:
+                    data_df["CodMatExt"] = data_df["RepeFonct"].astype(
+                        str).str.slice(0, 3)
+            except Exception:
+                pass
+            if search:
+                try:
+                    mask = data_df.apply(
+                        lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1
+                    )
+                    data_df = data_df[mask]
+                except Exception:
+                    pass
+            for col, vals in curr_filters.items():
+                if col in data_df.columns and vals:
+                    data_df = data_df[data_df[col].astype(
+                        str).isin(list(vals))]
+            st.session_state["grid_data_df"] = data_df
+            st.session_state["grid_filters"] = curr_filters
+            st.session_state["grid_search"] = search or ""
+        else:
+            data_df = st.session_state.get("grid_data_df")
+
+        st.sidebar.caption(f"{len(data_df)} résultats trouvés")
+
+        # Export filtered results to Excel
+        try:
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                data_df.to_excel(writer, index=False, sheet_name="filtered")
+            buffer.seek(0)
+            st.download_button(
+                label="Export filtered (XLSX)",
+                data=buffer,
+                file_name="filtered_results.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="secondary",
+                help="Télécharger le tableau filtré au format Excel",
+                key="dl_filtered_xlsx",
+            )
+        except Exception:
+            pass
+
+        gb = GridOptionsBuilder.from_dataframe(data_df)
         # Apply labels from MDA to column headers
         try:
             label_map = _attribute_label_map(st.session_state.get("mda_df"))
             if label_map:
-                for c in merged_df.columns:
+                for c in data_df.columns:
                     if c in label_map and label_map[c] != c:
                         gb.configure_column(c, headerName=label_map[c])
+        except Exception:
+            pass
+        # Pin first column on the left
+        try:
+            if len(data_df.columns) > 0:
+                first_col = "RepeFonct" if "RepeFonct" in data_df.columns else data_df.columns[
+                    0]
+                gb.configure_column(first_col, pinned="left")
         except Exception:
             pass
         # 'multiple' possible
@@ -358,13 +452,20 @@ def show_n_select_ecs(dfs):
         grid_options = gb.build()
         grid_options["paginationPageSize"] = 100
 
+        progress.progress(90, text="Rendering gridâ€¦")
         grid_response = AgGrid(
-            merged_df,
+            data_df,
             gridOptions=grid_options,
             update_mode="SELECTION_CHANGED",
             fit_columns_on_grid_load=False,
             theme="alpine",
+            custom_css={
+                ".ag-header-cell-label": {"font-size": "11px !important"},
+                ".ag-cell": {"font-size": "11px !important", "line-height": "18px !important"},
+            },
         )
+        progress.progress(100, text="Done")
+        progress.empty()
         selected = grid_response["selected_rows"]
 
     # === Identity Card ===
@@ -381,7 +482,7 @@ def show_n_select_ecs(dfs):
                 out_path = export_stf_from_row(selected)
                 st.success(f"Export réussi: {out_path}")
                 # except Exception as e:
-                #     st.error(f"Échec export: {e}")
+                #     st.error(f"Ã‰chec export: {e}")
             id_card_columns(selected)
     else:
         st.session_state["selected_ecs"] = False
@@ -408,7 +509,7 @@ def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> 
     if not electrical_attrs:
         return merged
 
-    # 2. Préparer la table source des valeurs à hériter
+    # 2. Préparer la table source des valeurs Ã  hériter
     source = merged[["RepeFonct"] + electrical_attrs].copy()
     source.rename(
         columns={attr: attr + "_Msrc" for attr in electrical_attrs}, inplace=True)
@@ -428,7 +529,7 @@ def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> 
     for attr in electrical_attrs:
         current_val = merged.loc[ra_mask, attr].astype(str)
 
-        # valeurs vides / nullish / contient [NE] (même avec suffixes)
+        # valeurs vides / nullish / contient [NE] (mÃªme avec suffixes)
         to_replace = (
             current_val.str.contains(r"\[ne\]", case=False, na=True) |
             current_val.str.strip().str.lower().isin(

@@ -4,6 +4,24 @@ import pandas as pd
 
 def id_card_columns(selected):
     mda_df, facet_labels = st.session_state['mda_df'], st.session_state['facet_labels']
+    # Map MUDU -> Label (fallback to Name when missing)
+    label_map = {}
+    try:
+        label_col = None
+        for c in ("Label", "Display", "Libelle", "Libellé"):
+            if c in mda_df.columns:
+                label_col = c
+                break
+        if label_col:
+            tmp = mda_df[["MUDU", label_col]].copy()
+            tmp = tmp.dropna(subset=["MUDU"])  # keep rows with defined MUDU
+            for _, r in tmp.iterrows():
+                mudu = str(r["MUDU"])
+                lab = r[label_col]
+                if pd.notna(lab) and str(lab).strip() != "":
+                    label_map[mudu] = str(lab)
+    except Exception:
+        label_map = {}
 
     # Remplir chaque colonne avec les attributs de la facette
     for facet in facet_labels:
@@ -22,8 +40,9 @@ def id_card_columns(selected):
                 attr = row["MUDU"]
                 try:
                     value = selected.loc[0, attr]
+                    display = label_map.get(str(attr), str(attr))
                     st.markdown(
-                        f"**{attr}:** {value if pd.notna(value) else '-'}",
+                        f"**{display}:** {value if pd.notna(value) else '-'}",
                     )
                 except KeyError:
                     pass
