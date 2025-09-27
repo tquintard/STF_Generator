@@ -306,15 +306,46 @@ def show_n_select_ecs(dfs):
             mask = merged_df.apply(
                 lambda row: row.astype(str).str.contains(search, case=False).any(), axis=1
             )
-            filtered_df = merged_df[mask]
-            st.sidebar.caption(f"{len(filtered_df)} résultats trouvés")
+            merged_df = merged_df[mask]
 
-        gb = GridOptionsBuilder.from_dataframe(filtered_df)
+        # Default sidebar filters on key MUDUs
+        # Build a working copy and apply filters before free-text search
+        _pre = merged_df.copy()
+        try:
+            if "RepeFonct" in _pre.columns:
+                _pre["CodMatExt"] = _pre["RepeFonct"].astype(
+                    str).str.slice(8, 11)
+        except Exception:
+            pass
+
+        with st.sidebar.expander("Filters", expanded=True):
+            def _apply_multiselect(df, col):
+                if col in df.columns:
+                    opts = (
+                        df[col].astype(str).dropna().replace(
+                            {"nan": ""}).unique().tolist()
+                    )
+                    # clean empties
+                    opts = sorted([o for o in opts if o != ""])
+                    sel = st.multiselect(col, opts)
+                    if sel:
+                        return df[df[col].astype(str).isin(sel)]
+                return df
+
+            for _col in ("ElemSys", "ComponentKind", "Contrat", "CodMatExt"):
+                _pre = _apply_multiselect(_pre, _col)
+
+        # Apply the pre-filters to the dataset used by the search/grid
+        merged_df = _pre
+
+        st.sidebar.caption(f"{len(merged_df)} résultats trouvés")
+
+        gb = GridOptionsBuilder.from_dataframe(merged_df)
         # Apply labels from MDA to column headers
         try:
             label_map = _attribute_label_map(st.session_state.get("mda_df"))
             if label_map:
-                for c in filtered_df.columns:
+                for c in merged_df.columns:
                     if c in label_map and label_map[c] != c:
                         gb.configure_column(c, headerName=label_map[c])
         except Exception:
@@ -328,7 +359,7 @@ def show_n_select_ecs(dfs):
         grid_options["paginationPageSize"] = 100
 
         grid_response = AgGrid(
-            filtered_df,
+            merged_df,
             gridOptions=grid_options,
             update_mode="SELECTION_CHANGED",
             fit_columns_on_grid_load=False,
