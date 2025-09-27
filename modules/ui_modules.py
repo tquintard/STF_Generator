@@ -3,28 +3,30 @@ import pandas as pd
 
 
 def id_card_columns(selected):
-    ecs = selected.loc[0, "RepeFonct"]
-    st.subheader(f"🔩{ecs}")
     mda_df, facet_labels = st.session_state['mda_df'], st.session_state['facet_labels']
-    # Création d'autant de colonnes que de facettes
-    cols = st.columns(len(facet_labels))
 
     # Remplir chaque colonne avec les attributs de la facette
-    for col, facet in zip(cols, facet_labels):
-        with col:
-            # Si un label existe pour cette facette, on l’utilise, sinon on garde le code
-            label = facet_labels.get(facet, facet)
-            with st.expander(label, expanded=True):
-                group = mda_df[mda_df["Facet"] == facet]
-                for _, row in group.iterrows():
-                    attr = row["MUDU"]
-                    try:
-                        value = selected.loc[0, attr]
-                        st.markdown(
-                            f"**{attr}:** {value if pd.notna(value) else '-'}",
-                        )
-                    except KeyError:
-                        pass
+    for facet in facet_labels:
+        # Si un label existe pour cette facette, on l’utilise, sinon on garde le code
+        label = facet_labels.get(facet, facet)
+        with st.expander(label, expanded=True):
+            group = mda_df[mda_df["Facet"] == facet]
+            # Ordonner les attributs par la colonne 'Order' si disponible
+            if "Order" in group.columns:
+                group = group.copy()
+                group["__OrderNum__"] = pd.to_numeric(
+                    group["Order"], errors="coerce")
+                group = group.sort_values(
+                    ["__OrderNum__", "MUDU"], kind="mergesort")
+            for _, row in group.iterrows():
+                attr = row["MUDU"]
+                try:
+                    value = selected.loc[0, attr]
+                    st.markdown(
+                        f"**{attr}:** {value if pd.notna(value) else '-'}",
+                    )
+                except KeyError:
+                    pass
 
 
 def upload_sidebar():
@@ -80,4 +82,5 @@ def sidebar_inputs():
                 st.session_state.inputs_integrated = False
                 st.session_state.uploaded_files = None
                 st.session_state.dataframes = None
+                st.session_state.merged_df = None
                 st.rerun()

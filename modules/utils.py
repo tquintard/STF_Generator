@@ -5,7 +5,95 @@ import pandas as pd
 import streamlit as st
 from config.settings import log
 from st_aggrid import AgGrid, GridOptionsBuilder
+from modules.exporter import export_stf_from_row
 from modules.ui_modules import id_card_columns
+
+
+def _attribute_label_map(mda_df: pd.DataFrame) -> dict:
+    """Return mapping MUDU -> label from MDA if available.
+
+    Tries common label columns: 'Label', 'Display', 'Libelle', 'Libellé'.
+    """
+    if mda_df is None or mda_df.empty or "MUDU" not in mda_df.columns:
+        return {}
+    label_col = None
+    for c in ("Label", "Display", "Libelle", "Libellé"):
+        if c in mda_df.columns:
+            label_col = c
+            break
+    if label_col is None:
+        return {}
+    mapping = {}
+    for _, row in mda_df.iterrows():
+        mudu = row.get("MUDU")
+        if pd.isna(mudu):
+            continue
+        lab = row.get(label_col)
+        if pd.notna(lab) and str(lab).strip() != "":
+            mapping[str(mudu)] = str(lab)
+    return mapping
+
+
+def _infer_attr_type(attr: str, mda_df: pd.DataFrame) -> str:
+    """Infer attribute type from MDA. Returns one of: 'int', 'float', 'str'."""
+    try:
+        if mda_df is None or mda_df.empty or "MUDU" not in mda_df.columns:
+            return "str"
+        row = mda_df.loc[mda_df["MUDU"] == attr]
+        if row.empty:
+            return "str"
+        # Try common column names for type
+        type_col = None
+        for c in ["Type", "AttrType", "DataType", "AttributeType", "ColumnType"]:
+            if c in mda_df.columns:
+                type_col = c
+                break
+        if type_col is None:
+            return "str"
+        t = str(row.iloc[0][type_col]).strip().lower()
+        if any(x in t for x in ["int", "integer"]):
+            return "int"
+        if any(x in t for x in ["float", "double", "decimal", "number", "numeric", "real"]):
+            return "float"
+        return "str"
+    except Exception:
+        return "str"
+
+
+def _to_number(val):
+    """Parse a value to a float if possible, handling FR/EN formats.
+    Returns float or None.
+    """
+    if val is None:
+        return None
+    s = str(val).strip()
+    if s == "" or s.lower() in {"nan", "none", "null", "-"}:
+        return None
+    # Remove spaces and apostrophes used as thousand separators
+    s = s.replace("\u00A0", " ").replace(" ", "").replace("'", "")
+    # If both '.' and ',' exist, assume '.' thousand sep and ',' decimal
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s and "." not in s:
+        s = s.replace(",", ".")
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+
+def _format_number(num: float, kind: str) -> str:
+    """Format a number consistently for display (int or float)."""
+    if num is None:
+        return ""
+    if kind == "int":
+        try:
+            return str(int(round(num)))
+        except Exception:
+            return str(num)
+    # float formatting: minimal, no trailing zeros, up to 6 decimals
+    s = (f"{num:.6f}").rstrip("0").rstrip(".")
+    return s
 
 
 def apply_attribute_order(df: pd.DataFrame, mda_df: pd.DataFrame) -> pd.DataFrame:
@@ -108,15 +196,43 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
             Returns:
                 str: The resolved value
             """
-            val_left = str(row[col_left]) if pd.notna(
-                row[col_left]) and row[col_left] != "null" else ""
-            val_right = str(row[col_right]) if pd.notna(
-                row[col_right]) and row[col_right] != "null" else ""
-            if val_left == val_right:
-                return val_left
-            val_right = f"{val_right} (As-Designed)\n" if val_right != "" else ""
-            val_left = f"{val_left} (As-Procured)" if val_left != "" else ""
-            return val_right + val_left
+            raw_left = row[col_left]
+            raw_right = row[col_right]
+
+            # Normalize nullish
+            val_left = "" if pd.isna(raw_left) or str(
+                raw_left).lower() == "null" else str(raw_left)
+            val_right = "" if pd.isna(raw_right) or str(
+                raw_right).lower() == "null" else str(raw_right)
+
+            # Type-aware comparison using MDA
+            attr_type = _infer_attr_type(col, st.session_state.get("mda_df"))
+
+            if attr_type in {"int", "float"}:
+                n_left = _to_number(val_left)
+                n_right = _to_number(val_right)
+                if n_left is None and n_right is None:
+                    return ""
+                if n_left is not None and n_right is not None:
+                    if attr_type == "int":
+                        if int(round(n_left)) == int(round(n_right)):
+                            return _format_number(n_left, "int")
+                    else:
+                        if abs(n_left - n_right) <= 1e-9:
+                            return _format_number(n_left, "float")
+                disp_right = _format_number(
+                    n_right, "int" if attr_type == "int" else "float") if n_right is not None else val_right
+                disp_left = _format_number(
+                    n_left, "int" if attr_type == "int" else "float") if n_left is not None else val_left
+                right_part = f"{disp_right} (As-Designed)" if disp_right != "" else ""
+                left_part = f"{disp_left} (As-Procured)" if disp_left != "" else ""
+                return f"{right_part}\n{left_part}".strip()
+            else:
+                if val_left == val_right:
+                    return val_left.strip()
+                right_part = f"{val_right} (As-Designed)" if val_right != "" else ""
+                left_part = f"{val_left} (As-Procured)" if val_left != "" else ""
+                return f"{right_part}\n{left_part}".strip()
 
         merged[col] = merged.apply(resolve, axis=1)
         merged.drop(columns=[col_left, col_right], inplace=True)
@@ -129,6 +245,8 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
         f"Smart merge completed | rows={len(merged)} | unique {on}={merged[on].nunique()}",
         level="INFO",
     )
+    merged = apply_attribute_order(merged, st.session_state["mda_df"])
+    st.session_state["merged_df"] = merged
     return merged
 
 
@@ -136,21 +254,17 @@ def smart_merge(df_left, df_right, on="RepeFonct", label_left="1D", label_right=
 def read_inputs(uploaded_files):
     dfs = {}
     for file in uploaded_files:
-        try:
-            df = pd.read_csv(file)
+        df = pd.read_csv(file)
 
-            if "RepeFonct" not in df.columns:
-                st.error(
-                    f"File `{file.name}` does not contain 'RepeFonct' column.")
-                log(
-                    f"'RepeFonct' column missing in file: {file.name}. Columns={list(df.columns)}",
-                    level="WARNING",
-                )
-            else:
-                dfs[file.name] = df
-        except Exception as e:
-            st.error(f"Error reading {file.name}: {e}")
-            log(f"Exception while reading {file.name}: {e}", level="ERROR")
+        if "RepeFonct" not in df.columns:
+            st.error(
+                f"File `{file.name}` does not contain 'RepeFonct' column.")
+            log(
+                f"'RepeFonct' column missing in file: {file.name}. Columns={list(df.columns)}",
+                level="WARNING",
+            )
+        else:
+            dfs[file.name] = df
 
     st.session_state["dfs"] = dfs
     return dfs
@@ -158,21 +272,35 @@ def read_inputs(uploaded_files):
 
 def merge_df(dfs):
     # --- Merge step ---
-    merged_df = None
+    _merged_df = None
     for _, df in dfs.items():
 
-        if merged_df is None:
-            merged_df = df
+        if _merged_df is None:
+            _merged_df = df
         else:
-            merged_df = smart_merge(
-                merged_df, df, on="RepeFonct"
+            _merged_df = smart_merge(
+                _merged_df, df, on="RepeFonct"
             )
 
-    # ✅ Vérifier que la DF existe et n'est pas vide
-    if merged_df is not None and not merged_df.empty:
+    return _merged_df
+
+
+def show_n_select_ecs(dfs):
+
+    cols = st.columns([0.75, 0.25], gap="small")
+    with cols[0]:
+        st.subheader("🔎 Search Results")
+        selected = None
+        if "merged_df" not in st.session_state:
+            st.session_state["merged_df"] = None
+        if st.session_state["merged_df"] is None:
+            merged_df = merge_df(dfs)
+        else:
+            merged_df = st.session_state["merged_df"]
+
         # Search bar
         search = st.sidebar.text_input(
-            "🔎 Search", placeholder="🔎 Search", label_visibility="hidden")
+            "🔎 Search", label_visibility="visible")
 
         if search is not None:
             mask = merged_df.apply(
@@ -180,47 +308,25 @@ def merge_df(dfs):
             )
             filtered_df = merged_df[mask]
             st.sidebar.caption(f"{len(filtered_df)} résultats trouvés")
-        else:
-            filtered_df = merged_df
-    else:
-        filtered_df = pd.DataFrame()
-
-    # Apply attribute-based column ordering if MDM is available
-    try:
-        mda_df = st.session_state.get("mda_df")
-        if mda_df is not None:
-            filtered_df = apply_attribute_order(filtered_df, mda_df)
-    except Exception as _:
-        # In case of any issue with ordering, keep the original df
-        pass
-
-    return filtered_df
-
-
-def show_n_select_ecs(dfs):
-    if "selected_ecs" not in st.session_state:
-        st.session_state["selected_ecs"] = False
-        tabs = st.tabs(["🔎"])
-    else:
-        if st.session_state["selected_ecs"]:
-            tabs = st.tabs(
-                ["🔎",
-                 "🆔"])
-        else:
-            tabs = st.tabs(["🔎"])
-    selected = None
-
-    with tabs[0]:
-
-        filtered_df = merge_df(dfs)
 
         gb = GridOptionsBuilder.from_dataframe(filtered_df)
+        # Apply labels from MDA to column headers
+        try:
+            label_map = _attribute_label_map(st.session_state.get("mda_df"))
+            if label_map:
+                for c in filtered_df.columns:
+                    if c in label_map and label_map[c] != c:
+                        gb.configure_column(c, headerName=label_map[c])
+        except Exception:
+            pass
         # 'multiple' possible
         gb.configure_selection("single", use_checkbox=False)
         gb.configure_pagination(paginationAutoPageSize=False)
         gb.configure_default_column(editable=False, groupable=True)
+
         grid_options = gb.build()
-        grid_options["paginationPageSize"] = 20
+        grid_options["paginationPageSize"] = 100
+
         grid_response = AgGrid(
             filtered_df,
             gridOptions=grid_options,
@@ -232,10 +338,20 @@ def show_n_select_ecs(dfs):
 
     # === Identity Card ===
     if selected is not None:
+        selected = selected.reset_index(drop=True)
         st.session_state["selected_ecs"] = True
-        st.session_state["selected_ecs_df"] = selected.reset_index(drop=True)
-        with tabs[1]:
-            id_card_columns(st.session_state["selected_ecs_df"])
+        st.session_state["selected_ecs_df"] = selected
+        with cols[1]:
+            ecs = selected.loc[0, "RepeFonct"]
+            st.subheader(f"🔩{ecs}")
+            # Export section
+            if st.button("Export STF", type="primary"):
+                # try:
+                out_path = export_stf_from_row(selected)
+                st.success(f"Export réussi: {out_path}")
+                # except Exception as e:
+                #     st.error(f"Échec export: {e}")
+            id_card_columns(selected)
     else:
         st.session_state["selected_ecs"] = False
 

@@ -10,19 +10,14 @@ from modules.utils import show_n_select_ecs
 # from modules.loader import load_excel
 
 # Page configuration
-st.set_page_config(page_title="Input Viewer", page_icon="👀", layout="wide")
+st.set_page_config(page_title="HPC SG Portal", page_icon="⛩️", layout="wide")
 
 # --- Page start ---
 # log("Opening page: 01_Input_Viewer", level="INFO")
 
-st.title("👀 Input Viewer")
+st.title("⛩️ HPC SG Portal")
 
 if "inputs_integrated" not in st.session_state:
     st.session_state.inputs_integrated = False
 if st.session_state.inputs_integrated:
-    try:
-        show_n_select_ecs(st.session_state.dataframes)
-
-    except Exception as e:
-        st.error(f"Error merging data: {e}")
-        log(f"Exception during merge: {e}", level="ERROR")
+    show_n_select_ecs(st.session_state.dataframes)

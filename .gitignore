@@ -26,6 +26,8 @@ share/python-wheels/
 *.egg
 MANIFEST
 STF_Generator.zip
+outputs/
+inputs/
 
 # PyInstaller
 #   Usually these files are written by a python script from a template
