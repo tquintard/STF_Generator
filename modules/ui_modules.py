@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import pandas as pd
 
 
@@ -8,7 +8,7 @@ def id_card_columns(selected):
     label_map = {}
     try:
         label_col = None
-        for c in ("Label", "Display", "Libelle", "Libellé"):
+        for c in ("Label", "Display", "Libelle", "LibellÃ©"):
             if c in mda_df.columns:
                 label_col = c
                 break
@@ -25,7 +25,7 @@ def id_card_columns(selected):
 
     # Remplir chaque colonne avec les attributs de la facette
     for facet in facet_labels:
-        # Si un label existe pour cette facette, on l’utilise, sinon on garde le code
+        # Si un label existe pour cette facette, on lâ€™utilise, sinon on garde le code
         label = facet_labels.get(facet, facet)
         with st.expander(label, expanded=True):
             group = mda_df[mda_df["Facet"] == facet]
@@ -51,7 +51,7 @@ def id_card_columns(selected):
 def upload_sidebar():
     # --- Sidebar section ---
     input_uploader_expanded = True if 'inputs_uploaded' in st.session_state is None else False
-    with st.sidebar.expander("⬆️ Upload Inputs", expanded=input_uploader_expanded):
+    with st.sidebar.expander("â¬†ï¸ Upload Inputs", expanded=input_uploader_expanded):
         st.session_state['inputs_uploaded'] = st.file_uploader(
             "Upload input CSV files:",
             type=["csv"],
@@ -71,7 +71,7 @@ def load_csv(file):
 def sidebar_inputs():
     from modules.utils import read_inputs
 
-    """Gestion de l’upload et intégration des inputs dans la sidebar."""
+    """Gestion de lâ€™upload et intÃ©gration des inputs dans la sidebar."""
 
     if "inputs_integrated" not in st.session_state:
         st.session_state.inputs_integrated = False
@@ -81,7 +81,7 @@ def sidebar_inputs():
     with st.sidebar.expander("Upload Inputs", icon="⬇️", expanded=True):
         if not st.session_state.inputs_integrated:
             uploaded_files = st.file_uploader(
-                "Sélectionne tes inputs",
+                "SÃ©lectionne tes inputs",
                 type=["csv"],
                 accept_multiple_files=True
             )
@@ -93,10 +93,10 @@ def sidebar_inputs():
                     dfs = read_inputs(uploaded_files)
                     st.session_state.dataframes = dfs
                     st.session_state.inputs_integrated = True
-                    st.success("Inputs intégrés avec succès")
+                    st.success("Inputs intÃ©grÃ©s avec succÃ¨s")
                     st.rerun()
         else:
-            st.success("Inputs intégrés avec succès")
+            st.success("Inputs intÃ©grÃ©s avec succÃ¨s")
             if st.button("Reset"):
                 st.session_state.inputs_integrated = False
                 st.session_state.uploaded_files = None
