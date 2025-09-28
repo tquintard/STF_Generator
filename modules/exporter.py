@@ -1,4 +1,4 @@
-﻿from copy import copy
+from copy import copy
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, Union, List
@@ -14,6 +14,40 @@ from openpyxl.cell.cell import MergedCell
 
 from config.settings import OUTPUT_DIR, log, BASE_DIR
 
+
+
+TEMPLATE_MAP_STATE_KEY = "_stf_template_map"
+_TEMPLATE_MAP_CACHE: Optional[Dict[str, str]] = None
+
+
+def _get_template_map() -> Dict[str, str]:
+    global _TEMPLATE_MAP_CACHE
+    session_map = None
+    try:
+        session_map = st.session_state.get(TEMPLATE_MAP_STATE_KEY)
+    except Exception:
+        session_map = None
+    if session_map is not None:
+        _TEMPLATE_MAP_CACHE = dict(session_map)
+        return dict(session_map)
+
+    if _TEMPLATE_MAP_CACHE is None:
+        _TEMPLATE_MAP_CACHE = _discover_template_files()
+    template_map = dict(_TEMPLATE_MAP_CACHE)
+    try:
+        st.session_state[TEMPLATE_MAP_STATE_KEY] = template_map
+    except Exception:
+        pass
+    return template_map
+
+
+def _resolve_template_for_sgapp(sgapp_value: Union[str, float, None]) -> Optional[str]:
+    raw = str(sgapp_value).strip() if sgapp_value is not None else ""
+    if not raw or raw.lower() in {"nan", "none"}:
+        return None
+    key = raw.upper()
+    template_map = _get_template_map()
+    return template_map.get(key)
 
 def _normalize_header(name: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(name))
@@ -157,13 +191,8 @@ def _fill_workbook_with_values(wb, values: Dict[str, str], mda_df: Optional[pd.D
     _write_by_named_ranges(wb, values, mda_df)
 
 
-def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Optional[str] = None) -> str:
-    if template_path is None:
-        template_path = os.path.join(
-            BASE_DIR, "template", "stf_templates.xlsx")
-    if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Template not found: {template_path}")
 
+def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Optional[str] = None) -> str:
     if isinstance(selected, pd.DataFrame):
         row = selected.iloc[0]
         ecs = str(row.get("RepeFonct", "")).strip()
@@ -176,6 +205,20 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
     else:
         raise TypeError(
             "selected must be a pandas DataFrame (1 row) or a dict of values")
+
+    sgapp_value = values.get("SGApp")
+    sgapp_raw = str(sgapp_value).strip() if sgapp_value is not None else ""
+    if template_path is None:
+        template_path = _resolve_template_for_sgapp(sgapp_value)
+        if template_path is None:
+            template_dir = Path(BASE_DIR) / "template"
+            display_sgapp = sgapp_raw or "unknown"
+            log(f"Template not found for SGApp={display_sgapp}", level="ERROR")
+            raise FileNotFoundError(
+                f"Template not found for SGApp '{display_sgapp}'. Add a file matching 'SGxx-xx-x_*.xlsx' in {template_dir}")
+
+    if not os.path.exists(template_path):
+        raise FileNotFoundError(f"Template not found: {template_path}")
 
     safe_ecs = "".join(ch for ch in ecs if ch.isalnum()
                        or ch in ("-", "_")) or "ECS"
@@ -210,7 +253,6 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
     except Exception:
         pass
     return output_path
-
 
 def _apply_values_to_sheet(ws, cell_map: Dict[str, str], values: Dict[str, str], mda_df: Optional[pd.DataFrame]):
     lowered = {str(k).lower(): v for k, v in values.items()}
@@ -259,6 +301,7 @@ def _collect_named_ranges_by_sheet(wb) -> Dict[str, Dict[str, str]]:
     return sheet_map
 
 
+
 def _discover_template_files() -> Dict[str, str]:
     template_dir = Path(BASE_DIR) / "template"
     if not template_dir.exists():
@@ -268,7 +311,7 @@ def _discover_template_files() -> Dict[str, str]:
     for path in template_dir.glob("*.xlsx"):
         match = pattern.match(path.stem)
         if match:
-            mapping[match.group(1)] = str(path)
+            mapping[match.group(1).upper()] = str(path)
     return mapping
 
 
@@ -293,7 +336,7 @@ def export_stf_batch(data_df: pd.DataFrame) -> List[str]:
     if data_df is None or data_df.empty:
         return []
 
-    template_map = _discover_template_files()
+    template_map = _get_template_map()
     if not template_map:
         log("No STF templates discovered in template directory", level="ERROR")
         return []
@@ -310,10 +353,11 @@ def export_stf_batch(data_df: pd.DataFrame) -> List[str]:
     mda_df = st.session_state.get("mda_df")
 
     for (elemsys, sgapp), group in df.groupby(["ElemSys", "SGApp"], dropna=False):
-        sgapp_key = str(sgapp).strip()
+        sgapp_raw = str(sgapp).strip()
+        sgapp_key = sgapp_raw.upper()
         template_path = template_map.get(sgapp_key)
         if not template_path:
-            log(f"Template not found for SGApp={sgapp_key}", level="WARNING")
+            log(f"Template not found for SGApp={sgapp_raw}", level="WARNING")
             continue
 
         group_sorted = group.sort_values(by="RepeFonct", kind="mergesort")

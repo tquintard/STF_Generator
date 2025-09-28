@@ -1,9 +1,8 @@
-﻿# modules/utils.py
+# modules/utils.py
 
 import io
 import os
 import re
-import unicodedata
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -14,63 +13,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder
 
 from modules.exporter import export_stf_from_row, export_stf_batch
 from modules.ui_modules import id_card_columns
-
-
-def _normalize_header(name: str) -> str:
-    normalized = unicodedata.normalize("NFKD", str(name))
-    return "".join(ch for ch in normalized if not unicodedata.combining(ch)).lower()
-
-
-def _attribute_label_map(mda_df: Optional[pd.DataFrame]) -> Dict[str, str]:
-    """Return MUDU -> label mapping from the MDA sheet when available."""
-    if mda_df is None or mda_df.empty or "MUDU" not in mda_df.columns:
-        return {}
-    normalized_cols = {_normalize_header(col): col for col in mda_df.columns}
-    label_col = None
-    for candidate in ("label", "display", "libelle"):
-        col = normalized_cols.get(candidate)
-        if col:
-            label_col = col
-            break
-    if label_col is None:
-        return {}
-    mapping: Dict[str, str] = {}
-    for _, row in mda_df.iterrows():
-        mudu = row.get("MUDU")
-        if pd.isna(mudu):
-            continue
-        label = row.get(label_col)
-        if pd.notna(label) and str(label).strip() != "":
-            mapping[str(mudu)] = str(label)
-    return mapping
-
-
-def _infer_attr_type(attr: str, mda_df: Optional[pd.DataFrame]) -> str:
-    """Infer attribute type from the MDA (int, float or str)."""
-    try:
-        if mda_df is None or mda_df.empty or "MUDU" not in mda_df.columns:
-            return "str"
-        row = mda_df.loc[mda_df["MUDU"] == attr]
-        if row.empty:
-            return "str"
-        normalized_cols = {_normalize_header(
-            col): col for col in mda_df.columns}
-        type_col = None
-        for candidate in ("type", "attrtype", "datatype", "attributetype", "columntype"):
-            col = normalized_cols.get(candidate)
-            if col:
-                type_col = col
-                break
-        if type_col is None:
-            return "str"
-        value = str(row.iloc[0][type_col]).strip().lower()
-        if any(token in value for token in ("int", "integer")):
-            return "int"
-        if any(token in value for token in ("float", "double", "decimal", "number", "numeric", "real")):
-            return "float"
-    except Exception:
-        pass
-    return "str"
+from mdm.mdm_loader import attribute_label_map, apply_attribute_order, infer_attr_type
 
 
 def _to_number(val):
@@ -124,34 +67,6 @@ def _search_patterns(query: str) -> list[str]:
     return patterns
 
 
-def apply_attribute_order(df: pd.DataFrame, mda_df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    """Reorder columns so that they follow the MDA order when possible."""
-    if df is None or df.empty:
-        return df
-    if mda_df is None or mda_df.empty:
-        return df
-    if not {"MUDU", "Order"}.issubset(mda_df.columns):
-        return df
-    all_cols = list(df.columns)
-    subset = mda_df[mda_df["MUDU"].isin(all_cols)].copy()
-    if subset.empty:
-        return df
-    subset["__OrderNum__"] = pd.to_numeric(subset["Order"], errors="coerce")
-    subset.sort_values(["__OrderNum__", "MUDU"],
-                       inplace=True, kind="mergesort")
-    ordered_attrs = subset["MUDU"].tolist()
-    ordered: list[str] = []
-    for attr in ordered_attrs:
-        if attr in df.columns and attr not in ordered:
-            ordered.append(attr)
-    remaining = [col for col in all_cols if col not in ordered]
-    ordered.extend(remaining)
-    if "RepeFonct" in ordered:
-        ordered.remove("RepeFonct")
-        ordered.insert(0, "RepeFonct")
-    return df[ordered]
-
-
 def smart_merge(df_left: pd.DataFrame, df_right: pd.DataFrame, on: str = "RepeFonct",
                 label_left: str = "1D", label_right: str = "2D") -> pd.DataFrame:
     """Merge the left/right DataFrames and reconcile conflicting values."""
@@ -188,7 +103,7 @@ def smart_merge(df_left: pd.DataFrame, df_right: pd.DataFrame, on: str = "RepeFo
                 raw_left).lower() == "null" else str(raw_left)
             val_right = "" if pd.isna(raw_right) or str(
                 raw_right).lower() == "null" else str(raw_right)
-            attr_type = _infer_attr_type(col, mda_df)
+            attr_type = infer_attr_type(col, mda_df)
             if attr_type in {"int", "float"}:
                 n_left = _to_number(val_left)
                 n_right = _to_number(val_right)
@@ -347,16 +262,18 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
     cols = st.columns([0.75, 0.25], gap="small")
     with cols[0]:
         st.subheader("Search Results")
-        progress = st.progress(0, text="Preparing data...")
+        status_placeholder = st.empty()
+        status_active = False
         selected = None
         if "merged_df" not in st.session_state:
             st.session_state["merged_df"] = None
         if st.session_state["merged_df"] is None:
+            status_active = True
+            status_placeholder.caption("Preparing data...")
             merged_df = merge_df(dfs)
-            progress.progress(20, text="Merging inputs...")
+            status_placeholder.caption("Merging inputs...")
         else:
             merged_df = st.session_state["merged_df"]
-            progress.progress(20, text="Using cached merged data...")
 
         search = st.sidebar.text_input("Search", label_visibility="visible")
         current_search = search or ""
@@ -366,9 +283,10 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             _pre["CodMatExt"] = _pre["RepeFonct"].astype(str).str[-3:]
 
         curr_filters: Dict[str, tuple] = {}
-        label_map = _attribute_label_map(st.session_state.get("mda_df"))
+        label_map = attribute_label_map(st.session_state.get("mda_df"))
         try:
-            norm_map = {re.sub(r"\W+", "", str(k)).lower(): v for k, v in label_map.items()}
+            norm_map = {re.sub(r"\W+", "", str(k)).lower()
+                               : v for k, v in label_map.items()}
         except Exception:
             norm_map = {}
 
@@ -401,7 +319,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
         )
 
         if need_compute:
-            progress.progress(45, text="Applying filters...")
+            status_active = True
+            status_placeholder.caption("Applying filters...")
             data_df = st.session_state.get("merged_df").copy()
             if "RepeFonct" in data_df.columns and "CodMatExt" not in data_df.columns:
                 data_df["CodMatExt"] = data_df["RepeFonct"].astype(
@@ -424,7 +343,7 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                         str).isin(list(values))]
             if "::auto_unique_id::" in data_df.columns:
                 data_df = data_df.drop(columns="::auto_unique_id::")
-            progress.progress(65, text="Preparing grid...")
+            status_placeholder.caption("Preparing grid...")
             st.session_state["grid_data_df"] = data_df.reset_index(drop=True)
             st.session_state["grid_filters"] = curr_filters.copy()
             st.session_state["grid_search"] = current_search
@@ -435,7 +354,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                 data_df = st.session_state.get("merged_df").copy()
             if "::auto_unique_id::" in data_df.columns:
                 data_df = data_df.drop(columns="::auto_unique_id::")
-            progress.empty()
+            status_placeholder.empty()
+            status_active = False
 
         st.sidebar.caption(f"{len(data_df)} results found")
         if st.button("Export all STF (filtered)", key="export_all_stf"):
@@ -472,7 +392,7 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             pass
 
         gb = GridOptionsBuilder.from_dataframe(data_df)
-        label_map = _attribute_label_map(st.session_state.get("mda_df"))
+        label_map = attribute_label_map(st.session_state.get("mda_df"))
         try:
             if label_map:
                 for col in data_df.columns:
@@ -493,8 +413,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
         grid_options = gb.build()
         grid_options["paginationPageSize"] = 100
 
-        if need_compute:
-            progress.progress(90, text="Rendering grid...")
+        if status_active:
+            status_placeholder.caption("Rendering grid...")
 
         grid_response = AgGrid(
             data_df,
@@ -507,10 +427,6 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                 ".ag-cell": {"font-size": "11px !important", "line-height": "18px !important"},
             },
         )
-
-        if need_compute:
-            progress.progress(100, text="Done")
-            progress.empty()
 
         selected = grid_response["selected_rows"]
 
