@@ -432,22 +432,11 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
 
         selected_rows = grid_response["selected_rows"]
 
-        action_cols = st.columns([1, 1])
+        action_cols = st.columns([0.06, 0.1, 0.8], gap="small")
         with action_cols[0]:
-            if st.button("Export all STF (filtered)", key="export_all_stf"):
-                try:
-                    batch_path = export_stf_batch(data_df)
-                    if batch_path:
-                        st.success(f"Batch STF exported: {batch_path}")
-                    else:
-                        st.info("No STF generated (no matching templates).")
-                except Exception as exc:
-                    st.error(f"Batch export failed: {exc}")
-                    log(f"Batch export failed: {exc}", level="ERROR")
-        with action_cols[1]:
             if export_bytes:
                 st.download_button(
-                    label="Export filtered (XLSX)",
+                    label="Export",
                     data=export_bytes,
                     file_name="filtered_results.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -455,6 +444,22 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                     help="Download the filtered table as Excel",
                     key="dl_filtered_xlsx",
                 )
+        with action_cols[1]:
+            if st.button("Generate STF", key="export_all_stf"):
+                with action_cols[2]:
+                    try:
+                        batch_path = export_stf_batch(data_df)
+                        if batch_path:
+                            lines = ["STF Generation completed\n"]
+                            lines += [
+                                f"{path}" for path in batch_path]
+                            message = "\n".join(lines)
+                            st.success(message)
+                        else:
+                            st.info("No STF generated (no matching templates).")
+                    except Exception as exc:
+                        st.error(f"Batch export failed: {exc}")
+                        log(f"Batch export failed: {exc}", level="ERROR")
 
     tabs_state = st.session_state["ecs_tabs"]
     skip_next_id = st.session_state.get("ecs_skip_next_add")

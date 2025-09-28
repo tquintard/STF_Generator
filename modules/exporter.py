@@ -214,6 +214,7 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
             "selected must be a pandas DataFrame (1 row) or a dict of values")
 
     sgapp_value = values.get("SGApp")
+    sg_value = sgapp_value.split("-")[0]
     sgapp_raw = str(sgapp_value).strip() if sgapp_value is not None else ""
     if template_path is None:
         template_path = _resolve_template_for_sgapp(sgapp_value)
@@ -231,11 +232,11 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
                        or ch in ("-", "_")) or "ECS"
 
     elemsys_dir = _safe_dirname(values.get("ElemSys"), "ElemSys")
-    sgapp_dir = _safe_dirname(sgapp_value, "SGApp")
+    sgapp_dir = _safe_dirname(sg_value, "SGApp")
     target_dir = os.path.join(OUTPUT_DIR, elemsys_dir, sgapp_dir)
     os.makedirs(target_dir, exist_ok=True)
 
-    filename = f"{safe_ecs}.xlsx"
+    filename = f"{sgapp_value}_{safe_ecs}.xlsx"
     output_path = os.path.join(target_dir, filename)
     counter = 1
     while os.path.exists(output_path):
@@ -373,6 +374,7 @@ def export_stf_batch(data_df: pd.DataFrame) -> List[str]:
     for (elemsys, sgapp), group in df.groupby(["ElemSys", "SGApp"], dropna=False):
         sgapp_raw = str(sgapp).strip()
         sgapp_key = sgapp_raw.upper()
+        sg_key = sgapp_key.split("-")[0]
         template_path = template_map.get(sgapp_key)
         if not template_path:
             log(f"Template not found for SGApp={sgapp_raw}", level="WARNING")
@@ -387,7 +389,7 @@ def export_stf_batch(data_df: pd.DataFrame) -> List[str]:
         safe_elemsys = "".join(
             ch for ch in elemsys_key if ch.isalnum() or ch in ("-", "_")) or "ElemSys"
         elemsys_dir = _safe_dirname(elemsys_key, "ElemSys")
-        sgapp_dir = _safe_dirname(sgapp_key, "SGApp")
+        sgapp_dir = _safe_dirname(sg_key, "SGApp")
         target_dir = os.path.join(OUTPUT_DIR, elemsys_dir, sgapp_dir)
         os.makedirs(target_dir, exist_ok=True)
         filename = f"STF_{safe_elemsys}_{sgapp_key}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
