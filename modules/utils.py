@@ -259,14 +259,26 @@ def merge_df(dfs: Dict[str, pd.DataFrame]) -> pd.DataFrame:
 
 
 def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
-    cols = st.columns([0.75, 0.25], gap="small")
-    with cols[0]:
+    if "ecs_tabs" not in st.session_state:
+        st.session_state["ecs_tabs"] = []
+    if "ecs_skip_next_add" not in st.session_state:
+        st.session_state["ecs_skip_next_add"] = None
+    if "ecs_grid_key" not in st.session_state:
+        st.session_state["ecs_grid_key"] = 0
+    if "merged_df" not in st.session_state:
+        st.session_state["merged_df"] = None
+
+    existing_tabs_snapshot = list(st.session_state["ecs_tabs"])
+    tab_labels = ["Search"] + [tab["label"] for tab in existing_tabs_snapshot]
+    tabs = st.tabs(tab_labels or ["Search"])
+    selected_rows = None
+    export_bytes = None
+
+    with tabs[0]:
         st.subheader("Search Results")
         status_placeholder = st.empty()
         status_active = False
-        selected = None
-        if "merged_df" not in st.session_state:
-            st.session_state["merged_df"] = None
+
         if st.session_state["merged_df"] is None:
             status_active = True
             status_placeholder.caption("Preparing data...")
@@ -285,8 +297,7 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
         curr_filters: Dict[str, tuple] = {}
         label_map = attribute_label_map(st.session_state.get("mda_df"))
         try:
-            norm_map = {re.sub(r"\W+", "", str(k)).lower()
-                               : v for k, v in label_map.items()}
+            norm_map = {re.sub(r"\W+", "", str(k)).lower(): v for k, v in label_map.items()}
         except Exception:
             norm_map = {}
 
@@ -329,9 +340,7 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             for pattern in patterns:
                 try:
                     mask = data_df.apply(
-                        lambda row: row.astype(str).str.contains(
-                            pattern, case=False, regex=True, na=False
-                        ).any(),
+                        lambda row: row.astype(str).str.contains(pattern, case=False, regex=True, na=False).any(),
                         axis=1,
                     )
                     data_df = data_df[mask]
@@ -339,8 +348,7 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                     continue
             for col, values in curr_filters.items():
                 if col in data_df.columns and values:
-                    data_df = data_df[data_df[col].astype(
-                        str).isin(list(values))]
+                    data_df = data_df[data_df[col].astype(str).isin(list(values))]
             if "::auto_unique_id::" in data_df.columns:
                 data_df = data_df.drop(columns="::auto_unique_id::")
             status_placeholder.caption("Preparing grid...")
@@ -358,16 +366,6 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             status_active = False
 
         st.sidebar.caption(f"{len(data_df)} results found")
-        if st.button("Export all STF (filtered)", key="export_all_stf"):
-            try:
-                batch_path = export_stf_batch(data_df)
-                if batch_path:
-                    st.success(f"Batch STF exported: {batch_path}")
-                else:
-                    st.info("No STF generated (no matching templates).")
-            except Exception as exc:
-                st.error(f"Batch export failed: {exc}")
-                log(f"Batch export failed: {exc}", level="ERROR")
 
         try:
             if need_compute or st.session_state.get("grid_export_bytes") is None:
@@ -378,18 +376,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                 buffer.seek(0)
                 st.session_state["grid_export_bytes"] = buffer.getvalue()
             export_bytes = st.session_state.get("grid_export_bytes")
-            if export_bytes:
-                st.download_button(
-                    label="Export filtered (XLSX)",
-                    data=export_bytes,
-                    file_name="filtered_results.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="secondary",
-                    help="Download the filtered table as Excel",
-                    key="dl_filtered_xlsx",
-                )
         except Exception:
-            pass
+            export_bytes = None
 
         gb = GridOptionsBuilder.from_dataframe(data_df)
         label_map = attribute_label_map(st.session_state.get("mda_df"))
@@ -426,29 +414,97 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                 ".ag-header-cell-label": {"font-size": "11px !important"},
                 ".ag-cell": {"font-size": "11px !important", "line-height": "18px !important"},
             },
+            key=f"ecs_grid_{st.session_state['ecs_grid_key']}",
         )
 
-        selected = grid_response["selected_rows"]
+        if status_active:
+            status_placeholder.caption("Done")
 
-    if selected is not None:
-        selected_df = pd.DataFrame(selected).reset_index(drop=True)
-        st.session_state["selected_ecs"] = True
-        st.session_state["selected_ecs_df"] = selected_df
-        with cols[1]:
-            ecs = selected_df.loc[0,
-                                  "RepeFonct"] if "RepeFonct" in selected_df.columns else ""
-            st.subheader(str(ecs))
-            if st.button("Export STF", type="primary"):
+        selected_rows = grid_response["selected_rows"]
+
+        action_cols = st.columns([1, 1])
+        with action_cols[0]:
+            if st.button("Export all STF (filtered)", key="export_all_stf"):
                 try:
-                    out_path = export_stf_from_row(selected_df)
-                    st.success(f"Export success: {out_path}")
+                    batch_path = export_stf_batch(data_df)
+                    if batch_path:
+                        st.success(f"Batch STF exported: {batch_path}")
+                    else:
+                        st.info("No STF generated (no matching templates).")
                 except Exception as exc:
-                    st.error(f"Export failed: {exc}")
-            id_card_columns(selected_df)
+                    st.error(f"Batch export failed: {exc}")
+                    log(f"Batch export failed: {exc}", level="ERROR")
+        with action_cols[1]:
+            if export_bytes:
+                st.download_button(
+                    label="Export filtered (XLSX)",
+                    data=export_bytes,
+                    file_name="filtered_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="secondary",
+                    help="Download the filtered table as Excel",
+                    key="dl_filtered_xlsx",
+                )
+
+    tabs_state = st.session_state["ecs_tabs"]
+    skip_next_id = st.session_state.get("ecs_skip_next_add")
+    if selected_rows is not None and len(selected_rows) > 0:
+        selected_df = pd.DataFrame(selected_rows).reset_index(drop=True)
+        ecs_value = ""
+        if not selected_df.empty and "RepeFonct" in selected_df.columns:
+            ecs_value = str(selected_df.loc[0, "RepeFonct"]).strip()
+        label = ecs_value or "ECS"
+        tab_id = ecs_value or f"ecs_{len(tabs_state) + 1}"
+        existing_idx = next((idx for idx, tab in enumerate(tabs_state) if tab.get("id") == tab_id), None)
+        if existing_idx is None:
+            if skip_next_id == tab_id:
+                st.session_state["ecs_skip_next_add"] = None
+            else:
+                base_key = f"ecs_{_slugify(label)}" if _slugify(label) else f"ecs_{len(tabs_state) + 1}"
+                key = base_key
+                suffix = 1
+                existing_keys = {tab["key"] for tab in tabs_state}
+                while key in existing_keys:
+                    suffix += 1
+                    key = f"{base_key}_{suffix}"
+                tabs_state.append({"id": tab_id, "key": key, "label": label, "data": selected_df})
+                st.session_state["ecs_tabs"] = tabs_state
+                st.session_state["selected_ecs_df"] = selected_df
+                st.session_state["ecs_skip_next_add"] = None
+                st.session_state["ecs_grid_key"] += 1
+                st.rerun()
+        else:
+            tabs_state[existing_idx]["data"] = selected_df
+            st.session_state["ecs_tabs"] = tabs_state
+            st.session_state["selected_ecs_df"] = selected_df
+            st.session_state["ecs_skip_next_add"] = None
     else:
-        st.session_state["selected_ecs"] = False
+        st.session_state["ecs_skip_next_add"] = None
+    existing_tabs_snapshot = list(st.session_state["ecs_tabs"])
+    st.session_state["selected_ecs"] = bool(existing_tabs_snapshot)
 
-
+    for idx, tab_info in enumerate(existing_tabs_snapshot, start=1):
+        with tabs[idx]:
+            st.subheader(tab_info["label"])
+            control_cols = st.columns([0.3, 0.7])
+            with control_cols[0]:
+                if st.button("Fermer l'onglet", key=f"close_tab_{tab_info['key']}"):
+                    st.session_state["ecs_tabs"] = [
+                        tab for tab in st.session_state["ecs_tabs"] if tab["key"] != tab_info["key"]]
+                    st.session_state["ecs_skip_next_add"] = tab_info["id"]
+                    if not st.session_state["ecs_tabs"]:
+                        st.session_state["selected_ecs"] = False
+                        st.session_state["selected_ecs_df"] = pd.DataFrame()
+                    st.session_state["ecs_grid_key"] += 1
+                    st.rerun()
+            with control_cols[1]:
+                if st.button("Export STF", key=f"export_tab_{tab_info['key']}", type="primary"):
+                    try:
+                        out_path = export_stf_from_row(tab_info["data"])
+                        st.success(f"Export success: {out_path}")
+                    except Exception as exc:
+                        st.error(f"Export failed: {exc}")
+            id_card_columns(tab_info["data"])
 def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> pd.DataFrame:
     """Propagate electrical attributes from M-source ECS when RepeFonct ends with RA-."""
     if merged is None or merged.empty or mda_df is None or mda_df.empty:
