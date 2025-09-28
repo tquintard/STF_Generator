@@ -297,7 +297,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
         curr_filters: Dict[str, tuple] = {}
         label_map = attribute_label_map(st.session_state.get("mda_df"))
         try:
-            norm_map = {re.sub(r"\W+", "", str(k)).lower(): v for k, v in label_map.items()}
+            norm_map = {re.sub(r"\W+", "", str(k)).lower()
+                               : v for k, v in label_map.items()}
         except Exception:
             norm_map = {}
 
@@ -340,7 +341,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             for pattern in patterns:
                 try:
                     mask = data_df.apply(
-                        lambda row: row.astype(str).str.contains(pattern, case=False, regex=True, na=False).any(),
+                        lambda row: row.astype(str).str.contains(
+                            pattern, case=False, regex=True, na=False).any(),
                         axis=1,
                     )
                     data_df = data_df[mask]
@@ -348,7 +350,8 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                     continue
             for col, values in curr_filters.items():
                 if col in data_df.columns and values:
-                    data_df = data_df[data_df[col].astype(str).isin(list(values))]
+                    data_df = data_df[data_df[col].astype(
+                        str).isin(list(values))]
             if "::auto_unique_id::" in data_df.columns:
                 data_df = data_df.drop(columns="::auto_unique_id::")
             status_placeholder.caption("Preparing grid...")
@@ -455,19 +458,22 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             ecs_value = str(selected_df.loc[0, "RepeFonct"]).strip()
         label = ecs_value or "ECS"
         tab_id = ecs_value or f"ecs_{len(tabs_state) + 1}"
-        existing_idx = next((idx for idx, tab in enumerate(tabs_state) if tab.get("id") == tab_id), None)
+        existing_idx = next((idx for idx, tab in enumerate(
+            tabs_state) if tab.get("id") == tab_id), None)
         if existing_idx is None:
             if skip_next_id == tab_id:
                 st.session_state["ecs_skip_next_add"] = None
             else:
-                base_key = f"ecs_{_slugify(label)}" if _slugify(label) else f"ecs_{len(tabs_state) + 1}"
+                base_key = f"ecs_{_slugify(label)}" if _slugify(
+                    label) else f"ecs_{len(tabs_state) + 1}"
                 key = base_key
                 suffix = 1
                 existing_keys = {tab["key"] for tab in tabs_state}
                 while key in existing_keys:
                     suffix += 1
                     key = f"{base_key}_{suffix}"
-                tabs_state.append({"id": tab_id, "key": key, "label": label, "data": selected_df})
+                tabs_state.append(
+                    {"id": tab_id, "key": key, "label": label, "data": selected_df})
                 st.session_state["ecs_tabs"] = tabs_state
                 st.session_state["selected_ecs_df"] = selected_df
                 st.session_state["ecs_skip_next_add"] = None
@@ -485,10 +491,19 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
 
     for idx, tab_info in enumerate(existing_tabs_snapshot, start=1):
         with tabs[idx]:
-            st.subheader(tab_info["label"])
-            control_cols = st.columns([0.3, 0.7])
+            control_cols = st.columns([0.15, 0.75, 0.02], gap="small")
             with control_cols[0]:
-                if st.button("Fermer l'onglet", key=f"close_tab_{tab_info['key']}"):
+                st.subheader(tab_info["label"])
+            with control_cols[1]:
+                if st.button("Export STF", key=f"export_tab_{tab_info['key']}", type="primary"):
+                    try:
+                        out_path = export_stf_from_row(tab_info["data"])
+                        st.success(f"Export success: {out_path}")
+                    except Exception as exc:
+                        st.error(f"Export failed: {exc}")
+
+            with control_cols[2]:
+                if st.button("❌", key=f"close_tab_{tab_info['key']}", type="tertiary"):
                     st.session_state["ecs_tabs"] = [
                         tab for tab in st.session_state["ecs_tabs"] if tab["key"] != tab_info["key"]]
                     st.session_state["ecs_skip_next_add"] = tab_info["id"]
@@ -497,14 +512,10 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
                         st.session_state["selected_ecs_df"] = pd.DataFrame()
                     st.session_state["ecs_grid_key"] += 1
                     st.rerun()
-            with control_cols[1]:
-                if st.button("Export STF", key=f"export_tab_{tab_info['key']}", type="primary"):
-                    try:
-                        out_path = export_stf_from_row(tab_info["data"])
-                        st.success(f"Export success: {out_path}")
-                    except Exception as exc:
-                        st.error(f"Export failed: {exc}")
+
             id_card_columns(tab_info["data"])
+
+
 def apply_electrical_inheritance(merged: pd.DataFrame, mda_df: pd.DataFrame) -> pd.DataFrame:
     """Propagate electrical attributes from M-source ECS when RepeFonct ends with RA-."""
     if merged is None or merged.empty or mda_df is None or mda_df.empty:

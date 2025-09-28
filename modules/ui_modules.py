@@ -24,28 +24,30 @@ def id_card_columns(selected):
         label_map = {}
 
     # Remplir chaque colonne avec les attributs de la facette
-    for facet in facet_labels:
+    cols_facet = st.columns(len(facet_labels))
+    for pos, facet in enumerate(facet_labels):
         # Si un label existe pour cette facette, on lâ€™utilise, sinon on garde le code
         label = facet_labels.get(facet, facet)
-        with st.expander(label, expanded=True):
-            group = mda_df[mda_df["Facet"] == facet]
-            # Ordonner les attributs par la colonne 'Order' si disponible
-            if "Order" in group.columns:
-                group = group.copy()
-                group["__OrderNum__"] = pd.to_numeric(
-                    group["Order"], errors="coerce")
-                group = group.sort_values(
-                    ["__OrderNum__", "MUDU"], kind="mergesort")
-            for _, row in group.iterrows():
-                attr = row["MUDU"]
-                try:
-                    value = selected.loc[0, attr]
-                    display = label_map.get(str(attr), str(attr))
-                    st.markdown(
-                        f"**{display}:** {value if pd.notna(value) else '-'}",
-                    )
-                except KeyError:
-                    pass
+        with cols_facet[pos]:
+            with st.expander(label, expanded=True):
+                group = mda_df[mda_df["Facet"] == facet]
+                # Ordonner les attributs par la colonne 'Order' si disponible
+                if "Order" in group.columns:
+                    group = group.copy()
+                    group["__OrderNum__"] = pd.to_numeric(
+                        group["Order"], errors="coerce")
+                    group = group.sort_values(
+                        ["__OrderNum__", "MUDU"], kind="mergesort")
+                for _, row in group.iterrows():
+                    attr = row["MUDU"]
+                    try:
+                        value = selected.loc[0, attr]
+                        display = label_map.get(str(attr), str(attr))
+                        st.markdown(
+                            f"**{display}:** {value if pd.notna(value) else '-'}",
+                        )
+                    except KeyError:
+                        pass
 
 
 def upload_sidebar():
