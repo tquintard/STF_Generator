@@ -52,6 +52,14 @@ def _slugify(name: str) -> str:
     return slug or "input"
 
 
+def _safe_dirname(name: str, default: str) -> str:
+    value = str(name).strip() if name is not None else ""
+    if not value:
+        value = default
+    sanitized = re.sub(r"[^0-9A-Za-z_-]+", "_", value)
+    return sanitized or default
+
+
 def _search_patterns(query: str) -> list[str]:
     """Split search query on commas and convert * wildcards to regex patterns."""
     if not query:
@@ -297,8 +305,7 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
         curr_filters: Dict[str, tuple] = {}
         label_map = attribute_label_map(st.session_state.get("mda_df"))
         try:
-            norm_map = {re.sub(r"\W+", "", str(k)).lower()
-                               : v for k, v in label_map.items()}
+            norm_map = {re.sub(r"\W+", "", str(k)).lower()                        : v for k, v in label_map.items()}
         except Exception:
             norm_map = {}
 
@@ -491,18 +498,19 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
 
     for idx, tab_info in enumerate(existing_tabs_snapshot, start=1):
         with tabs[idx]:
-            control_cols = st.columns([0.15, 0.75, 0.02], gap="small")
+            control_cols = st.columns([0.15, 0.1, 0.55, 0.02], gap="small")
             with control_cols[0]:
                 st.subheader(tab_info["label"])
             with control_cols[1]:
                 if st.button("Export STF", key=f"export_tab_{tab_info['key']}", type="primary"):
-                    try:
-                        out_path = export_stf_from_row(tab_info["data"])
-                        st.success(f"Export success: {out_path}")
-                    except Exception as exc:
-                        st.error(f"Export failed: {exc}")
+                    with control_cols[2]:
+                        try:
+                            out_path = export_stf_from_row(tab_info["data"])
+                            st.success(f"Export success: {out_path}")
+                        except Exception as exc:
+                            st.error(f"Export failed: {exc}")
 
-            with control_cols[2]:
+            with control_cols[3]:
                 if st.button("❌", key=f"close_tab_{tab_info['key']}", type="tertiary"):
                     st.session_state["ecs_tabs"] = [
                         tab for tab in st.session_state["ecs_tabs"] if tab["key"] != tab_info["key"]]

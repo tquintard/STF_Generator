@@ -15,7 +15,6 @@ from openpyxl.cell.cell import MergedCell
 from config.settings import OUTPUT_DIR, log, BASE_DIR
 
 
-
 TEMPLATE_MAP_STATE_KEY = "_stf_template_map"
 _TEMPLATE_MAP_CACHE: Optional[Dict[str, str]] = None
 
@@ -48,6 +47,7 @@ def _resolve_template_for_sgapp(sgapp_value: Union[str, float, None]) -> Optiona
     key = raw.upper()
     template_map = _get_template_map()
     return template_map.get(key)
+
 
 def _normalize_header(name: str) -> str:
     normalized = unicodedata.normalize("NFKD", str(name))
@@ -105,6 +105,14 @@ def _excel_safe(name: str) -> str:
     if s and s[0].isdigit():
         s = f"_{s}"
     return s
+
+
+def _safe_dirname(name: str, default: str) -> str:
+    value = str(name).strip() if name is not None else ""
+    if not value:
+        value = default
+    sanitized = re.sub(r'[^0-9A-Za-z_-]+', '_', value)
+    return sanitized or default
 
 
 def _iter_defined_names(wb):
@@ -191,7 +199,6 @@ def _fill_workbook_with_values(wb, values: Dict[str, str], mda_df: Optional[pd.D
     _write_by_named_ranges(wb, values, mda_df)
 
 
-
 def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Optional[str] = None) -> str:
     if isinstance(selected, pd.DataFrame):
         row = selected.iloc[0]
@@ -215,7 +222,7 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
             display_sgapp = sgapp_raw or "unknown"
             log(f"Template not found for SGApp={display_sgapp}", level="ERROR")
             raise FileNotFoundError(
-                f"Template not found for SGApp '{display_sgapp}'. Add a file matching 'SGxx-xx-x_*.xlsx' in {template_dir}")
+                f"Template not found for SGApp '{display_sgapp}'")
 
     if not os.path.exists(template_path):
         raise FileNotFoundError(f"Template not found: {template_path}")
@@ -223,8 +230,19 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
     safe_ecs = "".join(ch for ch in ecs if ch.isalnum()
                        or ch in ("-", "_")) or "ECS"
 
-    _ensure_output_dir()
-    output_path = os.path.join(OUTPUT_DIR, f"{safe_ecs}.xlsx")
+    elemsys_dir = _safe_dirname(values.get("ElemSys"), "ElemSys")
+    sgapp_dir = _safe_dirname(sgapp_value, "SGApp")
+    target_dir = os.path.join(OUTPUT_DIR, elemsys_dir, sgapp_dir)
+    os.makedirs(target_dir, exist_ok=True)
+
+    filename = f"{safe_ecs}.xlsx"
+    output_path = os.path.join(target_dir, filename)
+    counter = 1
+    while os.path.exists(output_path):
+        filename = f"{safe_ecs}_{counter}.xlsx"
+        output_path = os.path.join(target_dir, filename)
+        counter += 1
+
     shutil.copyfile(template_path, output_path)
 
     wb = load_workbook(output_path)
@@ -253,6 +271,7 @@ def export_stf_from_row(selected: Union[pd.DataFrame, Dict], template_path: Opti
     except Exception:
         pass
     return output_path
+
 
 def _apply_values_to_sheet(ws, cell_map: Dict[str, str], values: Dict[str, str], mda_df: Optional[pd.DataFrame]):
     lowered = {str(k).lower(): v for k, v in values.items()}
@@ -299,7 +318,6 @@ def _collect_named_ranges_by_sheet(wb) -> Dict[str, Dict[str, str]]:
             if variant:
                 sheet_map[sheet_name][variant] = cell
     return sheet_map
-
 
 
 def _discover_template_files() -> Dict[str, str]:
@@ -368,8 +386,12 @@ def export_stf_batch(data_df: pd.DataFrame) -> List[str]:
         elemsys_key = str(elemsys).strip() or "ElemSys"
         safe_elemsys = "".join(
             ch for ch in elemsys_key if ch.isalnum() or ch in ("-", "_")) or "ElemSys"
+        elemsys_dir = _safe_dirname(elemsys_key, "ElemSys")
+        sgapp_dir = _safe_dirname(sgapp_key, "SGApp")
+        target_dir = os.path.join(OUTPUT_DIR, elemsys_dir, sgapp_dir)
+        os.makedirs(target_dir, exist_ok=True)
         filename = f"STF_{safe_elemsys}_{sgapp_key}_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
-        output_path = os.path.join(OUTPUT_DIR, filename)
+        output_path = os.path.join(target_dir, filename)
         try:
             shutil.copyfile(template_path, output_path)
         except Exception as exc:
