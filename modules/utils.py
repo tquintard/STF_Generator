@@ -427,9 +427,6 @@ def show_n_select_ecs(dfs: Dict[str, pd.DataFrame]):
             key=f"ecs_grid_{st.session_state['ecs_grid_key']}",
         )
 
-        if status_active:
-            status_placeholder.caption("Done")
-
         selected_rows = grid_response["selected_rows"]
 
         action_cols = st.columns([0.06, 0.1, 0.8], gap="small")
